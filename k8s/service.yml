@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-task-backlog
+  labels:
+    app: fastapi-task-backlog
+spec:
+  type: LoadBalancer
+  selector:
+    app: fastapi-task-backlog
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8000
