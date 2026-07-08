@@ -2,7 +2,8 @@ name: deploy-to-aks
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
 
 env:
   PYTHON_VERSION: "3.11"
@@ -13,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -27,24 +28,22 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install pytest
 
-      - name: Run tests
-        run: |
-          pytest -q
+      - name: Run test suite
+        run: pytest -q
 
       - name: Azure Login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Login to ACR
+      - name: Login to Azure Container Registry (ACR)
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.REGISTRY_LOGIN_SERVER }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Build and Push Docker image
-        id: image
+      - name: Build, tag, and push image
         env:
           REGISTRY: ${{ secrets.REGISTRY_LOGIN_SERVER }}
         run: |
@@ -60,11 +59,11 @@ jobs:
           resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
           cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
 
-      - name: Render Kubernetes manifest with image
+      - name: Render deployment manifest with pushed image
         run: |
           sed "s|REPLACE_IMAGE|${IMAGE}|g" k8s/deployment.yml > k8s/deployment.rendered.yml
 
-      - name: Deploy to AKS
+      - name: Apply Kubernetes manifests
         run: |
           kubectl apply -f k8s/deployment.rendered.yml
           kubectl apply -f k8s/service.yml
