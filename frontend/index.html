@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Synapse AI-SEOS · Auth Dashboard</title>
+    <meta name="description" content="Synapse AI-SEOS authentication and API verification dashboard." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-glow" aria-hidden="true"></div>
+
+    <header class="app-header" id="app-header" aria-label="Application header">
+      <div class="brand-wrap">
+        <div class="brand-badge" aria-hidden="true">SA</div>
+        <div>
+          <h1 class="brand-title">Synapse AI-SEOS</h1>
+          <p class="brand-subtitle">JWT Auth Verification Dashboard</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <label for="base-url" class="input-label">API Base URL</label>
+        <input id="base-url" class="input" type="url" value="http://localhost:8000" aria-label="API base URL" />
+      </div>
+    </header>
+
+    <main class="dashboard" id="dashboard" aria-label="Main dashboard">
+      <section class="card auth-card" id="auth-card" aria-labelledby="auth-card-title">
+        <div class="card-head">
+          <h2 id="auth-card-title">Authentication</h2>
+          <span id="auth-state-pill" class="pill pill-neutral" aria-live="polite">Not Authenticated</span>
+        </div>
+
+        <div class="field-group">
+          <label for="jwt-token" class="input-label">Bearer Token</label>
+          <textarea id="jwt-token" class="textarea" rows="6" placeholder="Paste JWT token here (without 'Bearer ')" aria-label="JWT token"></textarea>
+          <div class="row gap-sm">
+            <button id="btn-use-sample" class="btn btn-ghost" type="button" aria-label="Use sample token">Use Sample Token</button>
+            <button id="btn-clear-token" class="btn btn-ghost" type="button" aria-label="Clear token">Clear</button>
+            <button id="btn-copy-token" class="btn btn-ghost" type="button" aria-label="Copy token">Copy</button>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field-group">
+            <label for="claim-sub" class="input-label">sub (User ID)</label>
+            <input id="claim-sub" class="input" value="user-123" aria-label="Claim subject" />
+          </div>
+          <div class="field-group">
+            <label for="claim-email" class="input-label">email</label>
+            <input id="claim-email" class="input" value="user@example.com" aria-label="Claim email" />
+          </div>
+          <div class="field-group">
+            <label for="claim-name" class="input-label">name</label>
+            <input id="claim-name" class="input" value="Synapse User" aria-label="Claim name" />
+          </div>
+          <div class="field-group">
+            <label for="claim-roles" class="input-label">roles (comma-separated)</label>
+            <input id="claim-roles" class="input" value="admin,editor" aria-label="Claim roles" />
+          </div>
+        </div>
+
+        <div class="row">
+          <button id="btn-generate-token" class="btn btn-primary" type="button" aria-label="Generate mock token">Generate Mock JWT</button>
+          <p class="hint">Client-side unsigned helper token for local testing UX only.</p>
+        </div>
+      </section>
+
+      <section class="card actions-card" id="actions-card" aria-labelledby="actions-card-title">
+        <div class="card-head">
+          <h2 id="actions-card-title">API Actions</h2>
+          <span class="pill pill-info">Contract Probe</span>
+        </div>
+
+        <div class="actions-grid">
+          <button id="btn-health" class="btn btn-secondary" type="button" aria-label="Call health endpoint">GET /health</button>
+          <button id="btn-backlog" class="btn btn-secondary" type="button" aria-label="Call backlog endpoint">GET /backlog</button>
+          <button id="btn-me" class="btn btn-secondary" type="button" aria-label="Call users me endpoint">GET /users/me</button>
+        </div>
+
+        <div class="checks" aria-label="Response checks">
+          <div class="check-item">
+            <span class="check-key">WWW-Authenticate</span>
+            <code id="check-www-auth">-</code>
+          </div>
+          <div class="check-item">
+            <span class="check-key">Error Code</span>
+            <code id="check-error-code">-</code>
+          </div>
+          <div class="check-item">
+            <span class="check-key">Latency</span>
+            <code id="check-latency">-</code>
+          </div>
+        </div>
+      </section>
+
+      <section class="card console-card" id="console-card" aria-labelledby="console-card-title">
+        <div class="card-head">
+          <h2 id="console-card-title">Response Console</h2>
+          <div class="row gap-sm">
+            <span id="status-pill" class="pill pill-neutral" aria-live="polite">Idle</span>
+            <button id="btn-clear-console" class="btn btn-ghost" type="button" aria-label="Clear console">Clear</button>
+          </div>
+        </div>
+
+        <div class="meta-grid">
+          <div><span class="meta-k">Method</span><span id="meta-method" class="meta-v">-</span></div>
+          <div><span class="meta-k">Path</span><span id="meta-path" class="meta-v">-</span></div>
+          <div><span class="meta-k">Status</span><span id="meta-status" class="meta-v">-</span></div>
+          <div><span class="meta-k">Time</span><span id="meta-time" class="meta-v">-</span></div>
+        </div>
+
+        <pre id="response-output" class="console" aria-label="API response output">Ready.</pre>
+      </section>
+    </main>
+
+    <section id="toast-region" class="toast-region" aria-live="polite" aria-label="Notification region"></section>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

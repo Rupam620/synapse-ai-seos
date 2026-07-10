@@ -1,4 +1,4 @@
-name: deploy-to-aks
+name: CI-CD-AKS
 
 on:
   push:
@@ -6,21 +6,20 @@ on:
       - main
 
 env:
-  PYTHON_VERSION: "3.11"
   IMAGE_NAME: fastapi-task-backlog
 
 jobs:
-  ci-cd:
+  test-build-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
@@ -28,7 +27,10 @@ jobs:
           pip install .
           pip install pytest
 
-      - name: Run test suite
+      - name: Run tests
+        env:
+          JWT_SECRET_KEY: dev-secret-key-for-testing
+          JWT_ALGORITHM: HS256
         run: pytest -q
 
       - name: Azure Login
@@ -36,35 +38,36 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Login to Azure Container Registry (ACR)
+      - name: Log in to ACR
         uses: docker/login-action@v3
         with:
           registry: ${{ secrets.REGISTRY_LOGIN_SERVER }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
-      - name: Build, tag, and push Docker image
+      - name: Build and Push Docker image
+        id: docker_build
         env:
           REGISTRY: ${{ secrets.REGISTRY_LOGIN_SERVER }}
+          SHA_TAG: ${{ github.sha }}
         run: |
-          TAG=${GITHUB_SHA}
-          IMAGE=${REGISTRY}/${IMAGE_NAME}:${TAG}
-          echo "IMAGE=${IMAGE}" >> $GITHUB_ENV
-          docker build -t ${IMAGE} .
-          docker push ${IMAGE}
+          IMAGE_URI="$REGISTRY/${IMAGE_NAME}:${SHA_TAG}"
+          IMAGE_URI_LATEST="$REGISTRY/${IMAGE_NAME}:latest"
+          docker build -t "$IMAGE_URI" -t "$IMAGE_URI_LATEST" .
+          docker push "$IMAGE_URI"
+          docker push "$IMAGE_URI_LATEST"
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
       - name: Set AKS context
         uses: azure/aks-set-context@v4
         with:
-          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
           cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
+          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
 
-      - name: Render Kubernetes deployment manifest
+      - name: Deploy to AKS
+        env:
+          IMAGE_URI: ${{ steps.docker_build.outputs.image_uri }}
         run: |
-          sed "s|REPLACE_IMAGE|${IMAGE}|g" k8s/deployment.yml > k8s/deployment.rendered.yml
-
-      - name: Deploy manifests to AKS
-        run: |
-          kubectl apply -f k8s/deployment.rendered.yml
+          sed "s|REPLACE_IMAGE|${IMAGE_URI}|g" k8s/deployment.yml | kubectl apply -f -
           kubectl apply -f k8s/service.yml
           kubectl rollout status deployment/fastapi-task-backlog --timeout=180s

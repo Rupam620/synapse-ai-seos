@@ -1,148 +1,105 @@
-import importlib
-import logging
-from contextlib import asynccontextmanager
+from __future__ import annotations
+
+from collections.abc import Iterable
+from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-
-@pytest.fixture
-def app_module():
-    """Import app.main lazily so tests can monkeypatch around reloads if needed."""
-    import app.main as main_module
-
-    return main_module
+import app.main as main_module
 
 
-def test_app_metadata_from_settings(app_module):
-    assert app_module.app.title == app_module.settings.app_name
-    assert app_module.app.version == app_module.settings.app_version
+def _iter_route_like(route_obj: object) -> Iterable[object]:
+    path = getattr(route_obj, "path", None)
+    if isinstance(path, str):
+        yield route_obj
+
+    original_router = getattr(route_obj, "original_router", None)
+    if original_router is not None:
+        for nested in getattr(original_router, "routes", []):
+            yield from _iter_route_like(nested)
 
 
-def test_tasks_router_is_included_under_configured_prefix(app_module):
-    openapi = app_module.app.openapi()
-    paths = openapi.get("paths", {})
-
-    # We don't assume exact endpoint set, only that tasks routes are mounted correctly.
-    assert any(path.startswith(f"{app_module.settings.api_prefix}/tasks") for path in paths.keys())
-
-
-def test_request_logging_middleware_sets_request_id_header(app_module):
-    with TestClient(app_module.app) as client:
-        # Pick an existing endpoint from OpenAPI to avoid hardcoding assumptions.
-        paths = app_module.app.openapi()["paths"]
-        path = next(iter(paths.keys()))
-        method = next(iter(paths[path].keys())).upper()
-
-        response = client.request(method, path)
-        assert "X-Request-ID" in response.headers
-        assert response.headers["X-Request-ID"]
+def _extract_registered_paths(app: FastAPI) -> set[str]:
+    paths: set[str] = set()
+    for route in app.router.routes:
+        for concrete in _iter_route_like(route):
+            p = getattr(concrete, "path", None)
+            if isinstance(p, str):
+                paths.add(p)
+    return paths
 
 
-def test_request_logging_middleware_passthrough_request_id(app_module):
-    with TestClient(app_module.app) as client:
-        paths = app_module.app.openapi()["paths"]
-        path = next(iter(paths.keys()))
-        method = next(iter(paths[path].keys())).upper()
+def test_create_app_uses_settings_for_title_and_configures_logging(monkeypatch: pytest.MonkeyPatch):
+    calls: dict[str, object] = {"log_level": None, "settings_calls": 0}
 
-        request_id = "req-12345"
-        response = client.request(method, path, headers={"X-Request-ID": request_id})
-        assert response.headers.get("X-Request-ID") == request_id
+    fake_settings = SimpleNamespace(app_name="Synapse Test API", log_level="DEBUG")
 
+    def fake_get_settings():
+        calls["settings_calls"] = int(calls["settings_calls"]) + 1
+        return fake_settings
 
-def test_lifespan_startup_and_shutdown_logs(monkeypatch):
-    import app.main as main_module
+    def fake_configure_logging(level: str):
+        calls["log_level"] = level
 
-    calls = []
+    monkeypatch.setattr(main_module, "get_settings", fake_get_settings)
+    monkeypatch.setattr(main_module, "configure_logging", fake_configure_logging)
 
-    class FakeLogger:
-        def info(self, message, extra=None):
-            calls.append((message, extra))
+    app = main_module.create_app()
 
-    monkeypatch.setattr(main_module, "logger", FakeLogger())
-
-    async def fake_lifespan_test():
-        async with main_module.lifespan(main_module.app):
-            # inside app lifespan context
-            pass
-
-    import anyio
-
-    anyio.run(fake_lifespan_test)
-
-    assert calls[0][0] == "application_startup"
-    assert calls[0][1] == {"event": "startup"}
-    assert calls[-1][0] == "application_shutdown"
-    assert calls[-1][1] == {"event": "shutdown"}
+    assert app.title == "Synapse Test API"
+    assert calls["log_level"] == "DEBUG"
+    assert calls["settings_calls"] >= 1
 
 
-def test_lifespan_calls_init_db(monkeypatch):
-    import app.main as main_module
+def test_create_app_registers_health_backlog_users_routers_by_paths():
+    app = main_module.create_app()
+    paths = _extract_registered_paths(app)
 
-    called = {"init_db": 0}
-
-    def fake_init_db():
-        called["init_db"] += 1
-
-    monkeypatch.setattr(main_module, "init_db", fake_init_db)
-
-    async def run_lifespan_once():
-        async with main_module.lifespan(main_module.app):
-            pass
-
-    import anyio
-
-    anyio.run(run_lifespan_once)
-    assert called["init_db"] == 1
+    assert "/health" in paths
+    assert "/backlog" in paths
+    assert "/users/me" in paths
 
 
-def test_global_exception_handler_produces_standard_payload_shape():
-    # Build a minimal app that uses the same exception registration function
-    # and request logging middleware, then assert runtime behavior.
-    from app.core.handlers import register_exception_handlers
-    from app.middleware.request_logging import RequestLoggingMiddleware
+def test_http_exception_handler_returns_standardized_json_and_headers():
+    app = main_module.create_app()
 
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI):
-        yield
+    @app.get("/__test_http_exception")
+    def _raise_http_exc():
+        raise HTTPException(
+            status_code=418,
+            detail={"code": "teapot", "message": "short and stout"},
+            headers={"X-Test-Header": "present"},
+        )
 
-    app = FastAPI(lifespan=lifespan)
-    app.add_middleware(RequestLoggingMiddleware)
-    register_exception_handlers(app)
+    with TestClient(app) as client:
+        response = client.get("/__test_http_exception")
 
-    @app.get("/boom")
-    def boom():
-        raise RuntimeError("unexpected")
-
-    with TestClient(app, raise_server_exceptions=False) as client:
-        resp = client.get("/boom", headers={"X-Request-ID": "rid-500"})
-
-    assert resp.status_code == 500
-    body = resp.json()
-    assert set(body.keys()) == {"error_code", "message", "details", "request_id"}
-    assert body["error_code"] == "INTERNAL_SERVER_ERROR"
-    assert body["message"] == "Internal server error"
-    assert body["details"] is None
-    assert body["request_id"] == "rid-500"
+    assert response.status_code == 418
+    assert response.json() == {"detail": {"code": "teapot", "message": "short and stout"}}
+    assert response.headers.get("x-test-header") == "present"
 
 
-def test_import_side_effect_configure_logging_runs(monkeypatch):
-    # Validate main module calls configure_logging() on import.
-    import app.main as loaded_main
+def test_startup_event_revalidates_settings(monkeypatch: pytest.MonkeyPatch):
+    calls = {"settings": 0}
 
-    # We patch source module function then reload main to ensure call happens again.
-    import app.core.logging as logging_module
+    fake_settings = SimpleNamespace(app_name="Startup Check", log_level="INFO")
 
-    called = {"configure": 0}
+    def fake_get_settings():
+        calls["settings"] += 1
+        return fake_settings
 
-    def fake_configure_logging():
-        called["configure"] += 1
+    monkeypatch.setattr(main_module, "get_settings", fake_get_settings)
+    monkeypatch.setattr(main_module, "configure_logging", lambda _lvl: None)
 
-    monkeypatch.setattr(logging_module, "configure_logging", fake_configure_logging)
+    app = main_module.create_app()
 
-    # Reload main to trigger import-time side effects with patched function.
-    import app.main as main_module
-    importlib.reload(main_module)
+    with TestClient(app):
+        pass
 
-    assert called["configure"] == 1
+    assert calls["settings"] >= 2
+
+
+def test_module_level_app_is_fastapi_instance():
+    assert isinstance(main_module.app, FastAPI)

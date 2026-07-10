@@ -5,7 +5,7 @@ metadata:
   labels:
     app: fastapi-task-backlog
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: fastapi-task-backlog
   ports:

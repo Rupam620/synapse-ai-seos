@@ -1,33 +1,42 @@
-from contextlib import asynccontextmanager
+from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
-from app.api.v1.tasks import router as tasks_router
-from app.core.config import settings
-from app.core.handlers import register_exception_handlers
-from app.core.logging import configure_logging, get_logger
-from app.db.init_db import init_db
-from app.middleware.request_logging import RequestLoggingMiddleware
+from app.config import get_settings
+from app.core.logging import configure_logging
+import app.routes.backlog as backlog_module
+import app.routes.health as health_module
+import app.routes.users as users_module
 
-configure_logging()
-logger = get_logger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("application_startup", extra={"event": "startup"})
-    init_db()
-    yield
-    logger.info("application_shutdown", extra={"event": "shutdown"})
+health_router = health_module.router
+backlog_router = backlog_module.router
+users_router = users_module.router
 
 
-app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    lifespan=lifespan,
-)
+def create_app() -> FastAPI:
+    settings = get_settings()
+    configure_logging(settings.log_level)
 
-app.add_middleware(RequestLoggingMiddleware)
-register_exception_handlers(app)
+    app = FastAPI(title=settings.app_name)
 
-app.include_router(tasks_router, prefix=f"{settings.api_prefix}/tasks", tags=["tasks"])
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(_: Request, exc: HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=exc.headers,
+        )
+
+    @app.on_event("startup")
+    def _validate_startup_settings() -> None:
+        _ = get_settings()
+
+    app.include_router(health_router)
+    app.include_router(backlog_router)
+    app.include_router(users_router)
+
+    return app
+
+
+app = create_app()
